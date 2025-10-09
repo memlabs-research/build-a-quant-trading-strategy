@@ -348,7 +348,69 @@ def plot_static_timeseries(ts: pl.DataFrame, sym: str, col: str, interval_size: 
     plt.legend()
     plt.xticks(rotation=45)
     plt.tight_layout()
-    plt.show()    
+    plt.show()  
+
+
+def plot_multiple_lines(
+    df: pl.DataFrame, 
+    cols_to_plot: List[str], 
+    sym: str, 
+    width: int = 15, 
+    height: int = 6, 
+    xlabel_unit: str = "Time Step"
+):
+    import matplotlib.pyplot as plt 
+    """
+    Plots multiple columns from a Polars DataFrame on the same axes using Matplotlib.
+    The x-axis uses a simple numerical index (since no datetime column is present).
+    
+    Parameters:
+    -----------
+    df : polars.DataFrame
+        The Polars DataFrame containing the columns to plot.
+    cols_to_plot : list[str]
+        A list of column names to plot (e.g., ['log_return', 'mean']).
+    sym : str
+        A symbol or identifier for the series (used in the title).
+    width : int, default 15
+        Width of the plot in inches.
+    height : int, default 6
+        Height of the plot in inches.
+    xlabel_unit : str, default 'Time Step'
+        Label for the X-axis (the numerical index).
+    """
+    
+    # 1. Create the numerical index for the x-axis
+    x_index = np.arange(len(df))
+    
+    # 2. Set the figure size (controls the width/height)
+    plt.figure(figsize=(width, height))
+    
+    # 3. Loop through the list of columns and plot each one
+    for col in cols_to_plot:
+        if col in df.columns:
+            # Extract column data as a NumPy array (efficient)
+            y_values = df[col].to_numpy()
+            
+            # Plot the line, using the column name for the label
+            plt.plot(x_index, y_values, label=col)
+        else:
+            print(f"Warning: Column '{col}' not found in DataFrame.")
+
+    # 4. Finalize the plot
+    
+    # Dynamically generate the title based on the symbol and columns
+    title_cols = ', '.join(cols_to_plot)
+    plt.title(f'{sym} Series: {title_cols}')
+    
+    plt.xlabel(xlabel_unit)
+    plt.ylabel('Value') # Generic Y-label since multiple series are plotted
+    plt.legend(loc='best')
+    plt.grid(True, linestyle=':', alpha=0.6)
+    
+    # Adjust layout to prevent labels from being cut off
+    plt.tight_layout()
+    plt.show()  
 
 def plot_dyn_timeseries(ts: pl.DataFrame, sym: str, col: str, time_interval: str ):
     return altair.Chart(ts).mark_line(tooltip=True).encode(
@@ -615,8 +677,37 @@ def plot_column(df, col_name, figsize=(15, 6), title=None, xlabel='Index'):
     ylabel : str, optional
         Y-axis label. If None, uses column name
     """
-    import matplotlib.pyplot as plt
+
+    if title is None:
+        title = col_name
+
+    chart = df[col_name].plot.line()
+    return chart.properties(
+        width=800,
+        height=400,
+        title=title
+    )
+
+
+def plot_columns(df, col_name, figsize=(15, 6), title=None, xlabel='Index'):
+    """
+    Plot a columns from a Polars DataFrame using matplotlib.
     
+    Parameters:
+    -----------
+    df : polars.DataFrame
+        The Polars DataFrame
+    column_name : str
+        Name of the column to plot
+    figsize : tuple, default (15, 6)
+        Figure size as (width, height) in inches
+    title : str, optional
+        Plot title. If None, uses column name
+    xlabel : str, default 'Index'
+        X-axis label
+    ylabel : str, optional
+        Y-axis label. If None, uses column name
+    """    
     if title is None:
         title = col_name
 
@@ -797,4 +888,10 @@ def benchmark_linear_models(ts: pl.DataFrame, target: str, feature_pool: List[st
         benchmarks.append(benchmark_reg_model(ts, list(features), target, m, annualized_rate, no_epochs=no_epochs, loss=loss))
 
     benchmark = pl.DataFrame(benchmarks)
-    return benchmark.sort('sharpe', descending=True)    
+    return benchmark.sort('sharpe', descending=True)  
+
+# print out our learned params
+def print_model_params(model: nn.Module):
+    for name, param in model.named_parameters():
+        if param.requires_grad:
+            print(f"{name}:\n{param.data.numpy()}")  
