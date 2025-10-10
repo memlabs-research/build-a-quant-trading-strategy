@@ -8,8 +8,8 @@ from tqdm import tqdm
 
 import research
 
-MAKER_FEE = 0.000450
-TAKER_FEE = 0.000450
+MAKER_FEE = 0.0001
+TAKER_FEE = 0.0003
 
 def download_and_unzip(symbol: str, date: str | datetime,
                        download_dir: str = "data", cache_dir: str = "cache") -> pl.DataFrame:

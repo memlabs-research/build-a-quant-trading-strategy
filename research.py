@@ -872,7 +872,7 @@ def add_log_return_features(df: pl.DataFrame, col: str, forecast_horizon: int, m
         df = add_lags(df, log_return_col('close'), max_no_lags, forecast_horizon)
     return df
 
-def benchmark_linear_models(ts: pl.DataFrame, target: str, feature_pool: List[str], annualized_rate: int, max_no_features: int = 1, no_epochs = 200, loss = None) -> pl.DataFrame:
+def benchmark_linear_models(ts: pl.DataFrame, target: str, feature_pool: List[str], annualized_rate: int, max_no_features: int = 1, no_epochs = 200, loss = None, test_size=0.25) -> pl.DataFrame:
     import models
     
     ts = ts.drop_nulls()
@@ -885,13 +885,23 @@ def benchmark_linear_models(ts: pl.DataFrame, target: str, feature_pool: List[st
     for features in fs:
         m = models.LinearModel(len(features))
         m.apply(init_weights)
-        benchmarks.append(benchmark_reg_model(ts, list(features), target, m, annualized_rate, no_epochs=no_epochs, loss=loss))
+        benchmarks.append(benchmark_reg_model(ts, list(features), target, m, annualized_rate, no_epochs=no_epochs, loss=loss, test_size=test_size))
 
     benchmark = pl.DataFrame(benchmarks)
     return benchmark.sort('sharpe', descending=True)  
+
 
 # print out our learned params
 def print_model_params(model: nn.Module):
     for name, param in model.named_parameters():
         if param.requires_grad:
             print(f"{name}:\n{param.data.numpy()}")  
+
+
+def add_model_predictions(test_trades: pl.DataFrame, model: nn.Module, features: Union[str, List[str]]) -> pl.DataFrame:
+    if type(features) != list:
+        features = [features]
+    X_test = torch.tensor(test_trades[features].to_numpy(), dtype=torch.float32)
+    y_hat = model(X_test)
+    s = pl.Series('y_hat', model(X_test).detach().cpu().numpy().squeeze())
+    return test_trades.with_columns(s)
