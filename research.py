@@ -31,6 +31,7 @@ import torch.optim as optim                 # Optimization algorithms
 
 # Numerical computing and datetime
 import numpy as np                          # Numerical operations
+import numpy.typing as npt
 from datetime import datetime, timedelta    # Date and time handling
 
 # Visualization
@@ -348,7 +349,69 @@ def plot_static_timeseries(ts: pl.DataFrame, sym: str, col: str, interval_size: 
     plt.legend()
     plt.xticks(rotation=45)
     plt.tight_layout()
-    plt.show()    
+    plt.show()  
+
+
+def plot_multiple_lines(
+    df: pl.DataFrame, 
+    cols_to_plot: List[str], 
+    sym: str, 
+    width: int = 15, 
+    height: int = 6, 
+    xlabel_unit: str = "Time Step"
+):
+    import matplotlib.pyplot as plt 
+    """
+    Plots multiple columns from a Polars DataFrame on the same axes using Matplotlib.
+    The x-axis uses a simple numerical index (since no datetime column is present).
+    
+    Parameters:
+    -----------
+    df : polars.DataFrame
+        The Polars DataFrame containing the columns to plot.
+    cols_to_plot : list[str]
+        A list of column names to plot (e.g., ['log_return', 'mean']).
+    sym : str
+        A symbol or identifier for the series (used in the title).
+    width : int, default 15
+        Width of the plot in inches.
+    height : int, default 6
+        Height of the plot in inches.
+    xlabel_unit : str, default 'Time Step'
+        Label for the X-axis (the numerical index).
+    """
+    
+    # 1. Create the numerical index for the x-axis
+    x_index = np.arange(len(df))
+    
+    # 2. Set the figure size (controls the width/height)
+    plt.figure(figsize=(width, height))
+    
+    # 3. Loop through the list of columns and plot each one
+    for col in cols_to_plot:
+        if col in df.columns:
+            # Extract column data as a NumPy array (efficient)
+            y_values = df[col].to_numpy()
+            
+            # Plot the line, using the column name for the label
+            plt.plot(x_index, y_values, label=col)
+        else:
+            print(f"Warning: Column '{col}' not found in DataFrame.")
+
+    # 4. Finalize the plot
+    
+    # Dynamically generate the title based on the symbol and columns
+    title_cols = ', '.join(cols_to_plot)
+    plt.title(f'{sym} Series: {title_cols}')
+    
+    plt.xlabel(xlabel_unit)
+    plt.ylabel('Value') # Generic Y-label since multiple series are plotted
+    plt.legend(loc='best')
+    plt.grid(True, linestyle=':', alpha=0.6)
+    
+    # Adjust layout to prevent labels from being cut off
+    plt.tight_layout()
+    plt.show()  
 
 def plot_dyn_timeseries(ts: pl.DataFrame, sym: str, col: str, time_interval: str ):
     return altair.Chart(ts).mark_line(tooltip=True).encode(
@@ -615,8 +678,37 @@ def plot_column(df, col_name, figsize=(15, 6), title=None, xlabel='Index'):
     ylabel : str, optional
         Y-axis label. If None, uses column name
     """
-    import matplotlib.pyplot as plt
+
+    if title is None:
+        title = col_name
+
+    chart = df[col_name].plot.line()
+    return chart.properties(
+        width=800,
+        height=400,
+        title=title
+    )
+
+
+def plot_columns(df, col_name, figsize=(15, 6), title=None, xlabel='Index'):
+    """
+    Plot a columns from a Polars DataFrame using matplotlib.
     
+    Parameters:
+    -----------
+    df : polars.DataFrame
+        The Polars DataFrame
+    column_name : str
+        Name of the column to plot
+    figsize : tuple, default (15, 6)
+        Figure size as (width, height) in inches
+    title : str, optional
+        Plot title. If None, uses column name
+    xlabel : str, default 'Index'
+        X-axis label
+    ylabel : str, optional
+        Y-axis label. If None, uses column name
+    """    
     if title is None:
         title = col_name
 
@@ -648,10 +740,8 @@ def model_trade_results(y_true, y_pred) -> pl.DataFrame:
 
 
 def add_tx_fee(trades: pl.DataFrame, tx_fee: float, name: str):
-    roundtrip_fee_log = np.log(1 - 2 * tx_fee)
-    trades = trades.with_columns(pl.lit(roundtrip_fee_log).alias(f"tx_fee_log_{name}"))
-    trades = trades.with_columns((pl.col("trade_log_return") + pl.col(f"tx_fee_log_{name}")).alias(f"trade_log_return_net_{name}"))
-    return trades.with_columns(pl.col(f'trade_log_return_net_{name}').cum_sum().alias(f'equity_curve_net_{name}'))
+    tx_fee_col = (pl.col('exit_trade_value') * tx_fee + pl.col('entry_trade_value') * tx_fee).alias(f"tx_fee_{name}")
+    return trades.with_columns(tx_fee_col)
 
 
 def add_tx_fees(trades: pl.DataFrame, maker_fee: float, taker_fee: float):
@@ -781,7 +871,7 @@ def add_log_return_features(df: pl.DataFrame, col: str, forecast_horizon: int, m
         df = add_lags(df, log_return_col('close'), max_no_lags, forecast_horizon)
     return df
 
-def benchmark_linear_models(ts: pl.DataFrame, target: str, feature_pool: List[str], annualized_rate: int, max_no_features: int = 1, no_epochs = 200, loss = None) -> pl.DataFrame:
+def benchmark_linear_models(ts: pl.DataFrame, target: str, feature_pool: List[str], annualized_rate: int, max_no_features: int = 1, no_epochs = 200, loss = None, test_size=0.25) -> pl.DataFrame:
     import models
     
     ts = ts.drop_nulls()
@@ -794,7 +884,88 @@ def benchmark_linear_models(ts: pl.DataFrame, target: str, feature_pool: List[st
     for features in fs:
         m = models.LinearModel(len(features))
         m.apply(init_weights)
-        benchmarks.append(benchmark_reg_model(ts, list(features), target, m, annualized_rate, no_epochs=no_epochs, loss=loss))
+        benchmarks.append(benchmark_reg_model(ts, list(features), target, m, annualized_rate, no_epochs=no_epochs, loss=loss, test_size=test_size))
 
     benchmark = pl.DataFrame(benchmarks)
-    return benchmark.sort('sharpe', descending=True)    
+    return benchmark.sort('sharpe', descending=True)  
+
+
+# print out our learned params
+def print_model_params(model: nn.Module):
+    for name, param in model.named_parameters():
+        if param.requires_grad:
+            print(f"{name}:\n{param.data.numpy()}")  
+
+
+def add_model_predictions(test_trades: pl.DataFrame, model: nn.Module, features: Union[str, List[str]]) -> pl.DataFrame:
+    if type(features) != list:
+        features = [features]
+    X_test = torch.tensor(test_trades[features].to_numpy(), dtype=torch.float32)
+    y_hat = model(X_test)
+    s = pl.Series('y_hat', model(X_test).detach().cpu().numpy().squeeze())
+    return test_trades.with_columns(s)
+
+
+def add_trade_log_returns(trades: pl.DataFrame, pre_trade_values: Union[List[float],npt.NDArray[np.float32]], tx_fee: float, initial_capital: float) -> pl.DataFrame:
+    # add directional signal to indicate if we're going long or short
+    trades = trades.with_columns(pl.col('y_hat').sign().alias('dir_signal'))
+    # calculate trade log return
+    trades = trades.with_columns((pl.col('close_log_return') * pl.col('dir_signal')).alias('trade_log_return'))
+    # calculate the cumulative sum of the trade log returns - this is the equity curves in log space
+    trades = trades.with_columns(pl.col('trade_log_return').cum_sum().alias('cum_trade_log_return'))
+    trades = trades.with_columns(
+        # add pre trade values
+        pre_trade_values.alias('pre_trade_value'),
+        # add post trade values
+        (pre_trade_values * pl.col('trade_log_return').exp()).alias('post_trade_value'),
+        # add trade qty
+        (pre_trade_values / pl.col('open')).alias('trade_qty'),
+    )
+    
+    trades = trades.with_columns(
+        # add signed trade quantities (the main output of our strategy)
+        (pl.col('trade_qty') * pl.col('dir_signal')).alias('signed_trade_qty'),
+        # add trade gross pnl
+        (pl.col('post_trade_value') - pl.col('pre_trade_value')).alias('trade_gross_pnl')
+        # add tx fees
+        (pl.col('pre_trade_value') * tx_fee + pl.col('post_trade_value') * tx_fee).alias('tx_fees')
+    )
+    trades = trades.with_columns(
+        # calculate each trade's profit after fees (net)
+        (pl.col('trade_gross_pnl')-pl.col('tx_fees')).alias('trade_net_pnl')
+    )
+    trades = trades.with_columns(
+        # calculate equity curve for gross profit
+        (initial_capital + pl.col('trade_gross_pnl').cum_sum()).alias('equity_curve_gross')
+        # calculate equity curve for net profit
+        (initial_capital + pl.col('trade_net_pnl').cum_sum()).alias('equity_curve_net')        
+    )
+
+def add_equity_curve(trades: pl.DataFrame, initial_capital: float, col_name: str, suffix: str) -> pl.DataFrame:
+    return trades.with_columns(
+        (initial_capital + pl.col(col_name).cum_sum()).alias(f'equity_curve_{suffix}')
+    )
+
+def add_compounding_trades(trades, capital, leverage, maker_fee, taker_fee):
+    lev_capital = capital * leverage
+    # calculate entry and exit trade value and size
+    trades = trades.with_columns(
+        ((pl.col('cum_trade_log_return').exp()) * lev_capital).shift().fill_null(lev_capital).alias('entry_trade_value'),
+        ((pl.col('cum_trade_log_return').exp()) * lev_capital).alias('exit_trade_value'),
+    ).with_columns(
+        (pl.col('entry_trade_value') / pl.col('open') * pl.col('dir_signal')).alias('signed_trade_qty'),
+        (pl.col('exit_trade_value')-pl.col('entry_trade_value')).alias('trade_gross_pnl'),
+    )
+    # add transaction fee
+    trades = add_tx_fees(trades, maker_fee, taker_fee)
+    # add net trade pnl
+    trades = trades.with_columns(
+        (pl.col('trade_gross_pnl') - pl.col('tx_fee_taker')).alias('trade_net_taker_pnl'),
+        (pl.col('trade_gross_pnl') - pl.col('tx_fee_maker')).alias('trade_net_maker_pnl'),
+    )
+    trades = add_equity_curve(trades, capital, 'trade_gross_pnl', 'gross')
+    # add net equity curves (both taker and maker)  
+    trades = add_equity_curve(trades, capital, 'trade_net_taker_pnl', 'taker')
+    trades = add_equity_curve(trades, capital, 'trade_net_maker_pnl', 'maker')
+    return trades
+
