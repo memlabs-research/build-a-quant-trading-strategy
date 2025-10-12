@@ -31,6 +31,7 @@ import torch.optim as optim                 # Optimization algorithms
 
 # Numerical computing and datetime
 import numpy as np                          # Numerical operations
+import numpy.typing as npt
 from datetime import datetime, timedelta    # Date and time handling
 
 # Visualization
@@ -739,10 +740,8 @@ def model_trade_results(y_true, y_pred) -> pl.DataFrame:
 
 
 def add_tx_fee(trades: pl.DataFrame, tx_fee: float, name: str):
-    roundtrip_fee_log = np.log(1 - 2 * tx_fee)
-    trades = trades.with_columns(pl.lit(roundtrip_fee_log).alias(f"tx_fee_log_{name}"))
-    trades = trades.with_columns((pl.col("trade_log_return") + pl.col(f"tx_fee_log_{name}")).alias(f"trade_log_return_net_{name}"))
-    return trades.with_columns(pl.col(f'trade_log_return_net_{name}').cum_sum().alias(f'equity_curve_net_{name}'))
+    tx_fee_col = (pl.col('exit_trade_value') * tx_fee + pl.col('entry_trade_value') * tx_fee).alias(f"tx_fee_{name}")
+    return trades.with_columns(tx_fee_col)
 
 
 def add_tx_fees(trades: pl.DataFrame, maker_fee: float, taker_fee: float):
@@ -905,3 +904,45 @@ def add_model_predictions(test_trades: pl.DataFrame, model: nn.Module, features:
     y_hat = model(X_test)
     s = pl.Series('y_hat', model(X_test).detach().cpu().numpy().squeeze())
     return test_trades.with_columns(s)
+
+
+def add_trade_log_returns(trades: pl.DataFrame, pre_trade_values: Union[List[float],npt.NDArray[np.float32]], tx_fee: float, initial_capital: float) -> pl.DataFrame:
+    # add directional signal to indicate if we're going long or short
+    trades = trades.with_columns(pl.col('y_hat').sign().alias('dir_signal'))
+    # calculate trade log return
+    trades = trades.with_columns((pl.col('close_log_return') * pl.col('dir_signal')).alias('trade_log_return'))
+    # calculate the cumulative sum of the trade log returns - this is the equity curves in log space
+    trades = trades.with_columns(pl.col('trade_log_return').cum_sum().alias('cum_trade_log_return'))
+    trades = trades.with_columns(
+        # add pre trade values
+        pre_trade_values.alias('pre_trade_value'),
+        # add post trade values
+        (pre_trade_values * pl.col('trade_log_return').exp()).alias('post_trade_value'),
+        # add trade qty
+        (pre_trade_values / pl.col('open')).alias('trade_qty'),
+    )
+    
+    trades = trades.with_columns(
+        # add signed trade quantities (the main output of our strategy)
+        (pl.col('trade_qty') * pl.col('dir_signal')).alias('signed_trade_qty'),
+        # add trade gross pnl
+        (pl.col('post_trade_value') - pl.col('pre_trade_value')).alias('trade_gross_pnl')
+        # add tx fees
+        (pl.col('pre_trade_value') * tx_fee + pl.col('post_trade_value') * tx_fee).alias('tx_fees')
+    )
+    trades = trades.with_columns(
+        # calculate each trade's profit after fees (net)
+        (pl.col('trade_gross_pnl')-pl.col('tx_fees')).alias('trade_net_pnl')
+    )
+    trades = trades.with_columns(
+        # calculate equity curve for gross profit
+        (initial_capital + pl.col('trade_gross_pnl').cum_sum()).alias('equity_curve_gross')
+        # calculate equity curve for net profit
+        (initial_capital + pl.col('trade_net_pnl').cum_sum()).alias('equity_curve_net')        
+    )
+
+def add_equity_curve(trades: pl.DataFrame, initial_capital: float, col_name: str, suffix: str) -> pl.DataFrame:
+    return trades.with_columns(
+        (initial_capital + pl.col(col_name).cum_sum()).alias(f'equity_curve_{suffix}')
+    )
+
