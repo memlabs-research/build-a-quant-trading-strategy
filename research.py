@@ -946,3 +946,26 @@ def add_equity_curve(trades: pl.DataFrame, initial_capital: float, col_name: str
         (initial_capital + pl.col(col_name).cum_sum()).alias(f'equity_curve_{suffix}')
     )
 
+def add_compounding_trades(trades, capital, leverage, maker_fee, taker_fee):
+    lev_capital = capital * leverage
+    # calculate entry and exit trade value and size
+    trades = trades.with_columns(
+        ((pl.col('cum_trade_log_return').exp()) * lev_capital).shift().fill_null(lev_capital).alias('entry_trade_value'),
+        ((pl.col('cum_trade_log_return').exp()) * lev_capital).alias('exit_trade_value'),
+    ).with_columns(
+        (pl.col('entry_trade_value') / pl.col('open') * pl.col('dir_signal')).alias('signed_trade_qty'),
+        (pl.col('exit_trade_value')-pl.col('entry_trade_value')).alias('trade_gross_pnl'),
+    )
+    # add transaction fee
+    trades = add_tx_fees(trades, maker_fee, taker_fee)
+    # add net trade pnl
+    trades = trades.with_columns(
+        (pl.col('trade_gross_pnl') - pl.col('tx_fee_taker')).alias('trade_net_taker_pnl'),
+        (pl.col('trade_gross_pnl') - pl.col('tx_fee_maker')).alias('trade_net_maker_pnl'),
+    )
+    trades = add_equity_curve(trades, capital, 'trade_gross_pnl', 'gross')
+    # add net equity curves (both taker and maker)  
+    trades = add_equity_curve(trades, capital, 'trade_net_taker_pnl', 'taker')
+    trades = add_equity_curve(trades, capital, 'trade_net_maker_pnl', 'maker')
+    return trades
+
