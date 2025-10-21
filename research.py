@@ -43,6 +43,7 @@ import re
 import itertools
 from pathlib import Path
 from tqdm import tqdm
+import os
 
 SEED = 42
 
@@ -151,6 +152,139 @@ def load_timeseries(
     result = result.sort("datetime").unique(subset=["datetime"])
     
     return result
+
+
+def load_timeseries_range(
+    sym: str,
+    time_interval: str,
+    start_date: datetime,
+    end_date: datetime,
+    agg_cols: Union[pl.Expr,List[pl.Expr]],
+    data_path: Optional[str] = None
+) -> pl.DataFrame:
+    """
+    Load and aggregate trade data for a symbol between start_date and end_date
+    into OHLC time series using the given time interval.
+
+    Expects daily files named like:
+        {symbol}-trades-YYYY-MM-DD.parquet
+
+    Example filename:
+        BTCUSDT-trades-2025-09-22.parquet
+
+    Args:
+        sym: Symbol prefix (e.g., 'BTCUSDT')
+        time_interval: Aggregation interval (e.g., '1h', '5m')
+        start_date: Start datetime (inclusive)
+        end_date: End datetime (inclusive)
+        data_path: Directory containing cached trade parquet files (default: './cache')
+
+    Returns:
+        Polars DataFrame with aggregated OHLC time series for the given range.
+    """
+    if data_path is None:
+        data_path = "./cache"
+
+    if start_date > end_date:
+        raise ValueError("start_date must be before or equal to end_date")
+
+    ts_list = []
+    total_days = (end_date - start_date).days + 1
+
+    for i in tqdm(range(total_days), desc=f"Loading {sym}", unit="day"):
+        current_date = start_date + timedelta(days=i)
+        file_name = f"{sym}-trades-{current_date.strftime('%Y-%m-%d')}.parquet"
+        file_path = os.path.join(data_path, file_name)
+
+        if not os.path.exists(file_path):
+            tqdm.write(f"[WARNING] Missing file: {file_name}")
+            continue
+
+        try:
+            trades = pl.read_parquet(file_path)
+
+            if "datetime" not in trades.columns:
+                raise ValueError(f"Column 'datetime' not found in {file_name}")
+
+            trades = trades.with_columns(pl.col("datetime").cast(pl.Datetime))
+
+            ts = trades.group_by_dynamic("datetime", every=time_interval, offset="0m").agg(agg_cols)
+            ts_list.append(ts)
+
+        except Exception as e:
+            tqdm.write(f"[ERROR] {file_name}: {e}")
+
+    if not ts_list:
+        raise ValueError(f"No trade data found for {sym} in range {start_date} to {end_date}")
+
+    result = pl.concat(ts_list).sort("datetime").unique(subset=["datetime"])
+    return result
+
+def load_ohlc_timeseries_range(
+    sym: str,
+    time_interval: str,
+    start_date: datetime,
+    end_date: datetime,
+    data_path: Optional[str] = None
+) -> pl.DataFrame:
+    """
+    Load and aggregate trade data for a symbol between start_date and end_date
+    into OHLC time series using the given time interval.
+
+    Expects daily files named like:
+        {symbol}-trades-YYYY-MM-DD.parquet
+
+    Example filename:
+        BTCUSDT-trades-2025-09-22.parquet
+
+    Args:
+        sym: Symbol prefix (e.g., 'BTCUSDT')
+        time_interval: Aggregation interval (e.g., '1h', '5m')
+        start_date: Start datetime (inclusive)
+        end_date: End datetime (inclusive)
+        data_path: Directory containing cached trade parquet files (default: './cache')
+
+    Returns:
+        Polars DataFrame with aggregated OHLC time series for the given range.
+    """
+    if data_path is None:
+        data_path = "./cache"
+
+    if start_date > end_date:
+        raise ValueError("start_date must be before or equal to end_date")
+
+    ts_list = []
+    total_days = (end_date - start_date).days + 1
+
+    for i in tqdm(range(total_days), desc=f"Loading {sym}", unit="day"):
+        current_date = start_date + timedelta(days=i)
+        file_name = f"{sym}-trades-{current_date.strftime('%Y-%m-%d')}.parquet"
+        file_path = os.path.join(data_path, file_name)
+
+        if not os.path.exists(file_path):
+            tqdm.write(f"[WARNING] Missing file: {file_name}")
+            continue
+
+        try:
+            trades = pl.read_parquet(file_path)
+
+            if "datetime" not in trades.columns:
+                raise ValueError(f"Column 'datetime' not found in {file_name}")
+
+            trades = trades.with_columns(pl.col("datetime").cast(pl.Datetime))
+
+            ts = trades.group_by_dynamic("datetime", every=time_interval, offset="0m").agg(OHLC_AGGS)
+            ts_list.append(ts)
+
+        except Exception as e:
+            tqdm.write(f"[ERROR] {file_name}: {e}")
+
+    if not ts_list:
+        raise ValueError(f"No trade data found for {sym} in range {start_date} to {end_date}")
+
+    result = pl.concat(ts_list).sort("datetime").unique(subset=["datetime"])
+    return result
+
 
 def sharpe_annualization_factor(interval: str,
                                 trading_days_per_year: int = 365,
