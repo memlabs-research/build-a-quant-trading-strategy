@@ -883,6 +883,14 @@ def add_tx_fees(trades: pl.DataFrame, maker_fee: float, taker_fee: float):
     trades = add_tx_fee(trades, taker_fee, 'taker')
     return trades  
 
+def add_tx_fees_log(trades: pl.DataFrame, maker_fee, taker_fee):
+    return trades.with_columns(
+        (pl.col('trade_log_return') + np.log(maker_fee)).alias('trade_log_return_net_maker'),
+        (pl.col('trade_log_return') + np.log(taker_fee)).alias('trade_log_return_net_taker'),
+    ).with_columns(
+        pl.col('trade_log_return_net_maker').cum_sum().alias('equity_curve_net_maker'),
+        pl.col('trade_log_return_net_taker').cum_sum().alias('equity_curve_net_taker'),
+    )
 
 def eval_model_performance(y_actual, y_pred, feature_names: List[str], target_name: str, annualized_rate: float) -> Dict[str, any]:
     """Calculate performance metrics for the trading model."""
