@@ -79,17 +79,15 @@ def download_date_range(symbol: str, start_date: str | datetime, end_date: str |
     if isinstance(end_date, str):
         end_date = datetime.strptime(end_date, '%Y-%m-%d')
 
-    dfs = []
     num_days = (end_date - start_date).days + 1
 
     for i in tqdm(range(num_days), desc=f"Downloading {symbol}"):
         current_date = start_date + timedelta(days=i)
         try:
-            dfs.append(download_and_unzip(symbol, current_date, download_dir, cache_dir))
+            download_and_unzip(symbol, current_date, download_dir, cache_dir)
         except Exception as e:
             tqdm.write(f"[ERROR] {symbol} {current_date.date()}: {e}")
 
-    return dfs
 
 
 def download_trades(symbol: str, no_days: int,
