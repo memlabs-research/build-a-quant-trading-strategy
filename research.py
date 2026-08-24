@@ -885,8 +885,8 @@ def add_tx_fees(trades: pl.DataFrame, maker_fee: float, taker_fee: float):
 
 def add_tx_fees_log(trades: pl.DataFrame, maker_fee, taker_fee):
     return trades.with_columns(
-        (pl.col('trade_log_return') + np.log(maker_fee)).alias('trade_log_return_net_maker'),
-        (pl.col('trade_log_return') + np.log(taker_fee)).alias('trade_log_return_net_taker'),
+        (pl.col('trade_log_return') + np.log(1 - maker_fee)).alias('trade_log_return_net_maker'),
+        (pl.col('trade_log_return') + np.log(1 - taker_fee)).alias('trade_log_return_net_taker'),
     ).with_columns(
         pl.col('trade_log_return_net_maker').cum_sum().alias('equity_curve_net_maker'),
         pl.col('trade_log_return_net_taker').cum_sum().alias('equity_curve_net_taker'),
